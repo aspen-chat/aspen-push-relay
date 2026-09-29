@@ -35,7 +35,13 @@ Every deployment key may send `[limits] free_monthly_pushes` a month. A deployme
 more is given a tier by adding a row to `key_tier` (its key, as the 65 bytes of the point, and
 its monthly pushes). A deployment over its quota is answered `429` `quotaExhausted` with
 `Retry-After` until the month turns, and each phone may be woken `subscription_burst` times back
-to back and then once every `subscription_interval_seconds` (`429` `rateLimited`).
+to back and then once every `subscription_interval_seconds` (`429` `rateLimited`). The free
+quota is 200,000 pushes a month unless `relay.toml` says otherwise.
+
+Counts are kept in memory and saved every five seconds (`src/usage.rs`), and at shutdown, so a
+push costs the database one indexed read and no write. Several relays behind one address each
+read the others' counts at every save, so together they may let a deployment past its quota by
+what they accept in five seconds.
 
 ## Checking it
 

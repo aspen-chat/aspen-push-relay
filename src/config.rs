@@ -74,7 +74,7 @@ fn default_fcm() -> String {
 #[serde(default)]
 pub struct LimitsConfig {
     /// Pushes a deployment key may send each calendar month (UTC) without a tier of its own.
-    #[default = 100_000]
+    #[default = 200_000]
     pub free_monthly_pushes: i64,
     /// Pushes one subscription may take back to back.
     #[default = 20]
