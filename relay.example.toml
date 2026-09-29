@@ -1,0 +1,31 @@
+# Copy to relay.toml (which git ignores) and fill in. Every setting can also be given in the
+# environment: RELAY_ and the key, with __ between a section and its keys (RELAY_APNS__KEY_ID).
+
+# Where the relay listens, as plain HTTP; put a TLS proxy in front of it.
+listen_addr = "127.0.0.1:8480"
+# The relay's public origin: its endpoints are here, and every deployment's VAPID token names it.
+public_url = "https://push.aspen.chat"
+database_url = "postgres://relay:…@db.internal/relay"
+
+# Apple's push service, for the iOS app. Leave the section out to refuse iOS devices.
+[apns]
+team_id = "ABCDE12345"
+key_id = "FGHIJ67890"
+key_path = "/etc/aspen-push-relay/AuthKey_FGHIJ67890.p8"
+topics = ["org.aspen.chat"]
+# Set once Apple has granted the app the notification filtering entitlement: pushes that show
+# nothing (a channel read elsewhere, a message deleted) are then sent rather than dropped.
+filtering = false
+
+# Google's, for the Android app from the Play Store. Leave the section out to refuse Android
+# devices.
+[fcm]
+project_id = "aspen-chat"
+service_account_path = "/etc/aspen-push-relay/service-account.json"
+
+[limits]
+# Pushes a deployment may send each month without a tier of its own (key_tier).
+free_monthly_pushes = 100000
+# One phone may be woken this many times back to back, then once every interval.
+subscription_burst = 20
+subscription_interval_seconds = 3

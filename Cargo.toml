@@ -1,0 +1,25 @@
+[package]
+name = "aspen-push-relay"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+description = "Wakes the phones of one published build of the Aspen app for any Aspen deployment (spec/push.md in aspen-chat-server)."
+
+[dependencies]
+anyhow = "1.0.102"
+axum = { version = "0.8.4", features = ["macros"] }
+base64 = "0.22.1"
+chrono = { version = "0.4.41", features = ["serde"] }
+config = { version = "0.15.14", features = ["toml"] }
+diesel = { version = "2.2.10", features = ["uuid", "chrono", "postgres"] }
+diesel-async = { version = "0.7.4", features = ["deadpool", "postgres"] }
+reqwest = { version = "0.13.2", default-features = false, features = ["rustls", "http2", "json"] }
+ring = "0.17.14"
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0.140"
+smart-default = "0.7.1"
+thiserror = "2.0.18"
+tokio = { version = "1.44.2", features = ["macros", "rt-multi-thread", "signal"] }
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
+uuid = { version = "1.16.0", features = ["serde", "v4", "v7"] }
