@@ -129,8 +129,9 @@ def expect(condition: bool, what: str) -> None:
     print(f"e2e: ok: {what}")
 
 
-def psql(database_url: str, sql: str) -> None:
-    subprocess.run(["psql", database_url, "-qc", sql], check=True, capture_output=True)
+def psql(database_url: str, sql: str) -> str:
+    done = subprocess.run(["psql", database_url, "-qAtc", sql], check=True, capture_output=True, text=True)
+    return done.stdout.strip()
 
 
 def main() -> int:
@@ -189,6 +190,10 @@ def main() -> int:
             except OSError:
                 time.sleep(0.1)
         run(public_url, apple_key, google_key)
+        # Counts are saved every few seconds, not with each push.
+        time.sleep(6)
+        expect(psql(relay_url, "SELECT sum(pushes) FROM key_usage") == "6",
+               "every push accepted is counted in the database within a few seconds")
         print("e2e: every check passed")
         return 0
     except Failed as failure:

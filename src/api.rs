@@ -6,6 +6,7 @@ use crate::config::Config;
 use crate::db::{self, DbPool, Device, Subscription, device, subscription};
 use crate::fcm::Fcm;
 use crate::platform::{Outcome, Push};
+use crate::usage::Usage;
 use crate::vapid::{self, VapidError};
 use axum::Json;
 use axum::body::Bytes;
@@ -35,6 +36,7 @@ const MAX_TTL: Duration = Duration::from_secs(4 * 7 * 24 * 60 * 60);
 pub struct Relay {
     pub config: Config,
     pub db: DbPool,
+    pub usage: Arc<Usage>,
     pub apns: Option<Apns>,
     pub fcm: Option<Fcm>,
     buckets: Mutex<HashMap<Uuid, (f64, Instant)>>,
@@ -45,6 +47,7 @@ impl Relay {
         Relay {
             config,
             db,
+            usage: Arc::new(Usage::default()),
             apns,
             fcm,
             buckets: Mutex::new(HashMap::new()),
@@ -457,13 +460,17 @@ async fn push(
         problem.retry_after = Some(wait);
         return Err(problem);
     }
-    let (within, used) = db::count_push(
-        &mut conn,
-        &subscription.application_server_key,
-        relay.config.limits.free_monthly_pushes,
-        now,
-    )
-    .await?;
+    drop(conn);
+    let (within, used) = relay
+        .usage
+        .count(
+            &relay.db,
+            &subscription.application_server_key,
+            relay.config.limits.free_monthly_pushes,
+            now,
+        )
+        .await
+        .map_err(internal)?;
     if !within {
         use chrono::TimeZone;
         let next = db::month_of(now)
@@ -482,7 +489,6 @@ async fn push(
         problem.retry_after = Some((next - now).to_std().unwrap_or(Duration::from_secs(3600)));
         return Err(problem);
     }
-    drop(conn);
     let urgency = header_str(&headers, "urgency").unwrap_or("normal");
     let ttl = header_str(&headers, "ttl")
         .and_then(|ttl| ttl.parse::<u64>().ok())
@@ -519,16 +525,13 @@ async fn push(
         },
         _ => Ok(Outcome::Gone),
     };
-    let mut conn = relay.db.get().await?;
     match outcome {
         Ok(Outcome::Delivered) => {
-            diesel::update(subscription::table.find(subscription.id))
-                .set(subscription::last_push_at.eq(diesel::dsl::now))
-                .execute(&mut conn)
-                .await?;
+            relay.usage.pushed(subscription.id).await;
             Ok(StatusCode::CREATED)
         }
         Ok(Outcome::Gone) => {
+            let mut conn = relay.db.get().await?;
             diesel::delete(device::table.find(device.id))
                 .execute(&mut conn)
                 .await?;

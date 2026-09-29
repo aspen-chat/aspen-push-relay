@@ -150,32 +150,3 @@ pub fn month_of(now: DateTime<Utc>) -> NaiveDate {
     use chrono::Datelike;
     NaiveDate::from_ymd_opt(now.year(), now.month(), 1).expect("the first of a month exists")
 }
-
-/// Counts one push by `key` this month, answering whether it is still within the key's quota
-/// (its tier's, or `free` without one), and how many it has sent.
-pub async fn count_push(
-    conn: &mut AsyncPgConnection,
-    key: &[u8],
-    free: i64,
-    now: DateTime<Utc>,
-) -> QueryResult<(bool, i64)> {
-    let pushes: i64 = diesel::insert_into(key_usage::table)
-        .values((
-            key_usage::application_server_key.eq(key),
-            key_usage::month.eq(month_of(now)),
-            key_usage::pushes.eq(1),
-        ))
-        .on_conflict((key_usage::application_server_key, key_usage::month))
-        .do_update()
-        .set(key_usage::pushes.eq(key_usage::pushes + 1))
-        .returning(key_usage::pushes)
-        .get_result(conn)
-        .await?;
-    let quota: Option<i64> = key_tier::table
-        .select(key_tier::monthly_pushes)
-        .find(key)
-        .first(conn)
-        .await
-        .optional()?;
-    Ok((pushes <= quota.unwrap_or(free), pushes))
-}

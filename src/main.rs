@@ -8,6 +8,7 @@ mod config;
 mod db;
 mod fcm;
 mod platform;
+mod usage;
 mod vapid;
 
 use std::sync::Arc;
@@ -43,10 +44,13 @@ async fn main() -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(config.listen_addr).await?;
     tracing::info!(addr = %config.listen_addr, public_url = config.public_url, "relay listening");
     let relay = Arc::new(api::Relay::new(config, db, apns, fcm));
-    axum::serve(listener, api::router(relay))
+    usage::spawn_flusher(relay.usage.clone(), relay.db.clone());
+    axum::serve(listener, api::router(relay.clone()))
         .with_graceful_shutdown(async {
             let _ = tokio::signal::ctrl_c().await;
         })
         .await?;
+    // What was counted since the last save is saved before the relay goes.
+    relay.usage.flush(&relay.db).await?;
     Ok(())
 }
