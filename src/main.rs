@@ -11,6 +11,7 @@ mod platform;
 mod usage;
 mod vapid;
 
+use axum::serve::ListenerExt as _;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -41,7 +42,14 @@ async fn main() -> anyhow::Result<()> {
     if apns.is_none() && fcm.is_none() {
         tracing::warn!("neither [apns] nor [fcm] is set: every device will be refused");
     }
-    let listener = tokio::net::TcpListener::bind(config.listen_addr).await?;
+    // A response written in pieces would otherwise wait on the client's delayed ACK between them.
+    let listener = tokio::net::TcpListener::bind(config.listen_addr)
+        .await?
+        .tap_io(|stream| {
+            if let Err(e) = stream.set_nodelay(true) {
+                tracing::warn!("could not turn off Nagle's algorithm: {e}");
+            }
+        });
     tracing::info!(addr = %config.listen_addr, public_url = config.public_url, "relay listening");
     let relay = Arc::new(api::Relay::new(config, db, apns, fcm));
     usage::spawn_flusher(relay.usage.clone(), relay.db.clone());
