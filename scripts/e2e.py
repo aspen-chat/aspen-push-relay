@@ -32,7 +32,7 @@ from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
 ROOT = Path(__file__).resolve().parent.parent
 DATABASE = "aspen_push_relay_e2e"
-APP = "org.aspen.chat"
+APP = "com.aspen-chat.client"
 PROJECT = "aspen-e2e"
 
 

@@ -4,7 +4,7 @@
 # Where the relay listens, as plain HTTP; put a TLS proxy in front of it.
 listen_addr = "127.0.0.1:8480"
 # The relay's public origin: its endpoints are here, and every deployment's VAPID token names it.
-public_url = "https://push.aspen.chat"
+public_url = "https://push.aspen-chat.com"
 database_url = "postgres://relay:…@db.internal/relay"
 
 # Apple's push service, for the iOS app. Leave the section out to refuse iOS devices.
@@ -12,7 +12,7 @@ database_url = "postgres://relay:…@db.internal/relay"
 team_id = "ABCDE12345"
 key_id = "FGHIJ67890"
 key_path = "/etc/aspen-push-relay/AuthKey_FGHIJ67890.p8"
-topics = ["org.aspen.chat"]
+topics = ["com.aspen-chat.client"]
 # Set once Apple has granted the app the notification filtering entitlement: pushes that show
 # nothing (a channel read elsewhere, a message deleted) are then sent rather than dropped.
 filtering = false

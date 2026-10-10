@@ -11,7 +11,7 @@ pub struct Config {
     /// Where the relay listens, as plain HTTP; put a TLS proxy in front of it.
     #[serde(default = "default_listen_addr")]
     pub listen_addr: SocketAddr,
-    /// The relay's public origin, such as `https://push.aspen.chat`: where its endpoints are,
+    /// The relay's public origin, such as `https://push.aspen-chat.com`: where its endpoints are,
     /// and the audience every deployment's VAPID token must name.
     pub public_url: String,
     pub database_url: String,
@@ -92,7 +92,7 @@ pub fn load() -> Result<Config, config::ConfigError> {
             config::Environment::with_prefix("RELAY")
                 .prefix_separator("_")
                 .separator("__")
-                // `RELAY_APNS__TOPICS=org.aspen.chat,org.aspen.chat.beta`
+                // `RELAY_APNS__TOPICS=com.aspen-chat.client,com.aspen-chat.client.beta`
                 .list_separator(",")
                 .with_list_parse_key("apns.topics")
                 .try_parsing(true),
