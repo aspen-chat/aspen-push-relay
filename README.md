@@ -19,7 +19,12 @@ The protocol is `spec/push.md` in the Aspen repository. In short:
 
 ## Running it
 
-It needs PostgreSQL, and brings its own schema up to date at startup.
+It needs PostgreSQL, and brings its own schema up to date at startup. `database_url` is a libpq
+connection string, a URL or `key=value` pairs, and reaches PostgreSQL over TLS (OpenSSL's, as
+libpq's) as libpq's parameters say: `sslmode` (`disable`, `prefer` by default, `require`,
+`verify-ca`, `verify-full`), `sslrootcert` (a file of the authorities to trust, or `system`), and
+`sslcert` and `sslkey` (a client certificate). Use `verify-full`, which checks the certificate names
+the host; `src/database.rs` says what each mode checks.
 
 ```
 cp relay.example.toml relay.toml   # and fill it in

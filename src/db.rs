@@ -2,11 +2,11 @@
 //! subscriptions (a device's endpoint for one deployment key), each key's pushes this month, and
 //! the tiers keys have been given.
 
+use crate::database::Database;
 use chrono::{DateTime, NaiveDate, Utc};
 use diesel::prelude::*;
-use diesel_async::pooled_connection::AsyncDieselConnectionManager;
 use diesel_async::pooled_connection::deadpool::Pool;
-use diesel_async::{AsyncConnection, AsyncPgConnection, RunQueryDsl, SimpleAsyncConnection};
+use diesel_async::{AsyncPgConnection, RunQueryDsl, SimpleAsyncConnection};
 use uuid::Uuid;
 
 pub type DbPool = Pool<AsyncPgConnection>;
@@ -88,9 +88,11 @@ const MIGRATIONS: &[&str] = &[r#"
     );
 "#];
 
-/// Connects, and brings the schema up to date. Relays starting together take turns.
+/// Connects as `database_url` says (`database`), and brings the schema up to date. Relays
+/// starting together take turns.
 pub async fn connect(database_url: &str) -> anyhow::Result<DbPool> {
-    let mut conn = AsyncPgConnection::establish(database_url).await?;
+    let database: Database = database_url.parse()?;
+    let mut conn = database.connect().await?;
     conn.batch_execute(
         "SELECT pg_advisory_lock(7011);
          CREATE TABLE IF NOT EXISTS relay_migration (version INT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now());",
@@ -115,8 +117,7 @@ pub async fn connect(database_url: &str) -> anyhow::Result<DbPool> {
     }
     conn.batch_execute("SELECT pg_advisory_unlock(7011);")
         .await?;
-    let manager = AsyncDieselConnectionManager::<AsyncPgConnection>::new(database_url);
-    Ok(Pool::builder(manager).build()?)
+    Ok(database.pool()?)
 }
 
 #[derive(QueryableByName)]

@@ -14,6 +14,7 @@ pub struct Config {
     /// The relay's public origin, such as `https://push.aspen-chat.com`: where its endpoints are,
     /// and the audience every deployment's VAPID token must name.
     pub public_url: String,
+    /// A libpq connection string, with its TLS parameters (`database`).
     pub database_url: String,
     /// Apple's push service, for the iOS app. Left out, iOS devices are refused.
     pub apns: Option<ApnsConfig>,

@@ -5,6 +5,7 @@
 mod api;
 mod apns;
 mod config;
+mod database;
 mod db;
 mod fcm;
 mod platform;

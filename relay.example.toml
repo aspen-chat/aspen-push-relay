@@ -5,7 +5,9 @@
 listen_addr = "127.0.0.1:8480"
 # The relay's public origin: its endpoints are here, and every deployment's VAPID token names it.
 public_url = "https://push.aspen-chat.com"
-database_url = "postgres://relay:…@db.internal/relay"
+# A libpq connection string; over TLS, checking the server's certificate names its host, with
+# sslmode=verify-full (and sslrootcert=/path/to/ca.pem for an authority of your own).
+database_url = "postgres://relay:…@db.internal/relay?sslmode=verify-full"
 
 # Apple's push service, for the iOS app. Leave the section out to refuse iOS devices.
 [apns]
