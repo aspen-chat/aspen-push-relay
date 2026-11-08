@@ -2,7 +2,7 @@
 name = "aspen-push-relay"
 version = "0.1.0"
 edition = "2024"
-license = "GPL-3.0-or-later"
+license = "MPL-2.0"
 description = "Wakes the phones of one published build of the Aspen app for any Aspen deployment (spec/push.md in aspen-chat-server)."
 
 [dependencies]

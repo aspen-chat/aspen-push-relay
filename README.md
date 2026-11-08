@@ -60,4 +60,4 @@ and Python's `cryptography`.
 
 ## Licence
 
-GPL-3.0-or-later, as Aspen.
+MPL-2.0, as Aspen.
