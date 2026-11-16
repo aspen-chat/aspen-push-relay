@@ -1,4 +1,5 @@
-//! What the relay keeps: devices (one install of the app, with its platform token),
+//! What the relay keeps: devices (one install of the app, with its platform token, and on iOS
+//! the VoIP token calls are sent to),
 //! subscriptions (a device's endpoint for one deployment key), each key's pushes this month, and
 //! the tiers keys have been given.
 
@@ -21,6 +22,7 @@ diesel::table! {
         token -> Text,
         created_at -> Timestamptz,
         updated_at -> Timestamptz,
+        voip_token -> Nullable<Text>,
     }
 }
 
@@ -55,7 +57,8 @@ diesel::joinable!(subscription -> device (device));
 diesel::allow_tables_to_appear_in_same_query!(device, subscription, key_usage, key_tier);
 
 /// The relay's schema, one step per entry, each applied once in order.
-const MIGRATIONS: &[&str] = &[r#"
+const MIGRATIONS: &[&str] = &[
+    r#"
     CREATE TABLE device (
         id UUID PRIMARY KEY,
         secret_digest BYTEA NOT NULL,
@@ -86,7 +89,11 @@ const MIGRATIONS: &[&str] = &[r#"
         monthly_pushes BIGINT NOT NULL,
         note TEXT NOT NULL DEFAULT ''
     );
-"#];
+"#,
+    r#"
+    ALTER TABLE device ADD COLUMN voip_token TEXT;
+"#,
+];
 
 /// Connects as `database_url` says (`database`), and brings the schema up to date. Relays
 /// starting together take turns.
@@ -136,6 +143,9 @@ pub struct Device {
     pub app: String,
     pub environment: String,
     pub token: String,
+    /// PushKit's token, which a call is sent to; `None` for an Android device, and for an iOS
+    /// app that registered none, which is then sent no calls.
+    pub voip_token: Option<String>,
 }
 
 #[derive(Debug, Clone, Queryable, Selectable)]

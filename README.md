@@ -16,6 +16,11 @@ The protocol is `spec/push.md` in the Aspen repository. In short:
    the key a subscription was made for, and cannot read them.
 3. The relay hands the ciphertext to Apple or Google with the subscription's id; the app
    decrypts it, fetches the message from the deployment, and shows it.
+4. A push marked `Aspen-Push-Kind: call` rings the phone (`spec/push.md`, Calls): on iOS it goes
+   as a VoIP push, to the `.voip` topic at priority 10, to the `voipToken` the app registered
+   beside its token (an app that registered none is sent no calls); on Android as a high-priority
+   data message marked `k: call`. The relay learns that a call is ringing the phone, and nothing
+   else.
 
 ## Running it
 

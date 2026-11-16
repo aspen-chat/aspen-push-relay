@@ -1,5 +1,6 @@
 //! The relay's API (`spec/push.md`, The relay's API): devices and their subscriptions for the
-//! app, and the Web Push endpoint (RFC 8030) for deployments.
+//! app, and the Web Push endpoint (RFC 8030) for deployments, which also take the one header
+//! beyond Web Push's, `Aspen-Push-Kind: call`, naming a push that rings the phone.
 
 use crate::apns::Apns;
 use crate::config::Config;
@@ -32,6 +33,11 @@ use uuid::Uuid;
 pub const MAX_MESSAGE_BYTES: usize = 2048;
 /// The longest a push waits for its phone.
 const MAX_TTL: Duration = Duration::from_secs(4 * 7 * 24 * 60 * 60);
+/// The longest a platform token is taken; APNs and FCM tokens are far shorter.
+const MAX_TOKEN_CHARS: usize = 4096;
+/// The header a deployment marks a call with (`spec/push.md`, Pushing), and its one value.
+const KIND_HEADER: &str = "aspen-push-kind";
+const KIND_CALL: &str = "call";
 
 pub struct Relay {
     pub config: Config,
@@ -187,6 +193,32 @@ struct DeviceRequest {
     #[serde(default = "production")]
     environment: String,
     token: String,
+    /// PushKit's token, for an `apns` device that can show calls.
+    #[serde(default)]
+    voip_token: Option<String>,
+}
+
+fn token_fits(token: &str) -> bool {
+    !token.is_empty() && token.len() <= MAX_TOKEN_CHARS
+}
+
+/// Refuses a VoIP token on a device that is not Apple's: only PushKit issues one.
+fn voip_token_allowed(platform: &str, voip_token: Option<&str>) -> Result<(), Problem> {
+    match voip_token {
+        Some(_) if platform != "apns" => Err(Problem::new(
+            StatusCode::BAD_REQUEST,
+            "validation",
+            format!(
+                "A voipToken belongs to an apns device alone; {platform} devices are sent calls through their one token."
+            ),
+        )),
+        Some(token) if !token_fits(token) => Err(Problem::new(
+            StatusCode::BAD_REQUEST,
+            "validation",
+            format!("A voipToken is at most {MAX_TOKEN_CHARS} characters, and not empty."),
+        )),
+        _ => Ok(()),
+    }
 }
 
 fn production() -> String {
@@ -225,8 +257,7 @@ async fn create_device(
         ));
     }
     if !matches!(request.environment.as_str(), "production" | "sandbox")
-        || request.token.is_empty()
-        || request.token.len() > 4096
+        || !token_fits(&request.token)
     {
         return Err(Problem::new(
             StatusCode::BAD_REQUEST,
@@ -234,6 +265,7 @@ async fn create_device(
             "A device needs its platform's token, and an environment of production or sandbox.",
         ));
     }
+    voip_token_allowed(&request.platform, request.voip_token.as_deref())?;
     let id = Uuid::now_v7();
     let secret = random(32);
     let mut conn = relay.db.get().await?;
@@ -245,6 +277,7 @@ async fn create_device(
             device::app.eq(&request.app),
             device::environment.eq(&request.environment),
             device::token.eq(&request.token),
+            device::voip_token.eq(&request.voip_token),
         ))
         .execute(&mut conn)
         .await?;
@@ -277,9 +310,14 @@ async fn authorized(relay: &Relay, id: Uuid, headers: &HeaderMap) -> Result<Devi
     }
 }
 
+/// The tokens the platform issued anew: either or both, each left as it was when absent.
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct TokenRequest {
-    token: String,
+    #[serde(default)]
+    token: Option<String>,
+    #[serde(default)]
+    voip_token: Option<String>,
 }
 
 async fn update_device(
@@ -288,15 +326,42 @@ async fn update_device(
     headers: HeaderMap,
     Json(request): Json<TokenRequest>,
 ) -> Result<StatusCode, Problem> {
-    authorized(&relay, id, &headers).await?;
+    let device = authorized(&relay, id, &headers).await?;
+    if request.token.is_none() && request.voip_token.is_none()
+        || request
+            .token
+            .as_deref()
+            .is_some_and(|token| !token_fits(token))
+    {
+        return Err(Problem::new(
+            StatusCode::BAD_REQUEST,
+            "validation",
+            format!(
+                "Give the token the platform issued, voipToken, or both, each at most {MAX_TOKEN_CHARS} characters."
+            ),
+        ));
+    }
+    voip_token_allowed(&device.platform, request.voip_token.as_deref())?;
     let mut conn = relay.db.get().await?;
-    diesel::update(device::table.find(id))
-        .set((
-            device::token.eq(&request.token),
-            device::updated_at.eq(diesel::dsl::now),
-        ))
-        .execute(&mut conn)
-        .await?;
+    // Each token is replaced only when given, so the two are kept independently.
+    if let Some(token) = &request.token {
+        diesel::update(device::table.find(id))
+            .set((
+                device::token.eq(token),
+                device::updated_at.eq(diesel::dsl::now),
+            ))
+            .execute(&mut conn)
+            .await?;
+    }
+    if let Some(voip_token) = &request.voip_token {
+        diesel::update(device::table.find(id))
+            .set((
+                device::voip_token.eq(voip_token),
+                device::updated_at.eq(diesel::dsl::now),
+            ))
+            .execute(&mut conn)
+            .await?;
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -500,24 +565,47 @@ async fn push(
                 .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
     });
     let subscription_id = subscription.id.to_string();
+    let call = header_str(&headers, KIND_HEADER) == Some(KIND_CALL);
     let message = Push {
         subscription: &subscription_id,
         ciphertext: &body,
         urgent: urgency == "high",
         ttl,
         topic,
+        call,
     };
     let quiet = matches!(urgency, "low" | "very-low");
     let outcome = match device.platform.as_str() {
-        "apns" => match relay.apns.as_ref() {
+        "apns" => match (relay.apns.as_ref(), call, device.voip_token.as_deref()) {
+            (None, _, _) => Ok(Outcome::Gone),
             // Without the filtering entitlement, the app cannot keep a push from showing, so a
             // push meant to show nothing is not sent.
-            Some(apns) if quiet && !apns.filtering() => Ok(Outcome::Delivered),
-            Some(apns) => {
+            (Some(apns), false, _) if quiet && !apns.filtering() => Ok(Outcome::Delivered),
+            (Some(apns), false, _) => {
                 apns.send(&device.app, &device.environment, &device.token, &message)
                     .await
             }
-            None => Ok(Outcome::Gone),
+            // An app that registered no VoIP token is of a version that could not show the
+            // call; the ring is not sent to it, as a notification could not ring the phone.
+            (Some(_), true, None) => Ok(Outcome::Delivered),
+            (Some(apns), true, Some(voip_token)) => {
+                match apns
+                    .send(&device.app, &device.environment, voip_token, &message)
+                    .await
+                {
+                    // The VoIP token is gone, not the device: its alert token may still stand,
+                    // so the device is kept and sent calls again once the app registers a new one.
+                    Ok(Outcome::Gone) => {
+                        let mut conn = relay.db.get().await?;
+                        diesel::update(device::table.find(device.id))
+                            .set(device::voip_token.eq(None::<String>))
+                            .execute(&mut conn)
+                            .await?;
+                        Ok(Outcome::Delivered)
+                    }
+                    other => other,
+                }
+            }
         },
         "fcm" => match relay.fcm.as_ref() {
             Some(fcm) => fcm.send(&device.token, &message).await,

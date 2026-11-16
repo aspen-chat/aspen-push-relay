@@ -1,5 +1,7 @@
 //! Apple's push service: an alert that Aspen's notification service extension replaces, carrying
-//! the subscription's id and the ciphertext (`spec/push.md`, What reaches the phone).
+//! the subscription's id and the ciphertext (`spec/push.md`, What reaches the phone), or, for a
+//! call, a VoIP push to the device's VoIP token, which PushKit hands the app itself to report to
+//! CallKit (`spec/push.md`, Calls).
 
 use crate::config::ApnsConfig;
 use crate::platform::{Outcome, Push};
@@ -80,6 +82,9 @@ impl Apns {
         Ok(token)
     }
 
+    /// Sends `push` to `device_token`: the app's alert token, or, when `push.call`, its VoIP
+    /// token, as the push types differ (a VoIP push goes to the `.voip` topic, at priority 10,
+    /// with nothing for the notification system to show; PushKit wakes the app with it).
     pub async fn send(
         &self,
         app: &str,
@@ -92,22 +97,36 @@ impl Apns {
         } else {
             &self.config.production_url
         };
-        let payload = json!({
-            "aps": {
-                "alert": { "loc-key": PLACEHOLDER_KEY },
-                "mutable-content": 1,
-                "sound": "default",
-            },
-            "aspen": { "s": push.subscription, "c": URL_SAFE_NO_PAD.encode(push.ciphertext) },
-        });
+        let aspen = json!({ "s": push.subscription, "c": URL_SAFE_NO_PAD.encode(push.ciphertext) });
+        let payload = if push.call {
+            json!({ "aspen": aspen })
+        } else {
+            json!({
+                "aps": {
+                    "alert": { "loc-key": PLACEHOLDER_KEY },
+                    "mutable-content": 1,
+                    "sound": "default",
+                },
+                "aspen": aspen,
+            })
+        };
+        let (topic, push_type, priority) = if push.call {
+            (format!("{app}.voip"), "voip", "10")
+        } else {
+            (
+                app.to_string(),
+                "alert",
+                if push.urgent { "10" } else { "5" },
+            )
+        };
         for fresh in [false, true] {
             let mut request = self
                 .client
                 .post(format!("{base}/3/device/{device_token}"))
                 .bearer_auth(self.provider_token(fresh).await?)
-                .header("apns-topic", app)
-                .header("apns-push-type", "alert")
-                .header("apns-priority", if push.urgent { "10" } else { "5" })
+                .header("apns-topic", &topic)
+                .header("apns-push-type", push_type)
+                .header("apns-priority", priority)
                 .header(
                     "apns-expiration",
                     (chrono::Utc::now().timestamp() + push.ttl.as_secs() as i64).to_string(),

@@ -1,5 +1,7 @@
 //! Google's push service: a data message carrying the subscription's id and the ciphertext,
-//! which the app decrypts and shows itself (`spec/push.md`, What reaches the phone).
+//! which the app decrypts and shows itself (`spec/push.md`, What reaches the phone); a call is
+//! sent at high priority whatever its urgency, marked `k: call` so the app takes the call path
+//! before it has decrypted anything.
 
 use crate::apns::pem_body;
 use crate::config::FcmConfig;
@@ -109,16 +111,21 @@ impl Fcm {
 
     pub async fn send(&self, device_token: &str, push: &Push<'_>) -> anyhow::Result<Outcome> {
         let mut android = json!({
-            "priority": if push.urgent { "HIGH" } else { "NORMAL" },
+            "priority": if push.urgent || push.call { "HIGH" } else { "NORMAL" },
             "ttl": format!("{}s", push.ttl.as_secs()),
         });
         if let Some(topic) = push.topic {
             android["collapse_key"] = json!(topic);
         }
+        let mut data =
+            json!({ "s": push.subscription, "c": URL_SAFE_NO_PAD.encode(push.ciphertext) });
+        if push.call {
+            data["k"] = json!("call");
+        }
         let message = json!({
             "message": {
                 "token": device_token,
-                "data": { "s": push.subscription, "c": URL_SAFE_NO_PAD.encode(push.ciphertext) },
+                "data": data,
                 "android": android,
             }
         });

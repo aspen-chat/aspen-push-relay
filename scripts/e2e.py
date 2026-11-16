@@ -178,8 +178,10 @@ def main() -> int:
            "RELAY_FCM__PROJECT_ID": PROJECT,
            "RELAY_FCM__SERVICE_ACCOUNT_PATH": str(work / "service-account.json"),
            "RELAY_FCM__URL": stand_url,
-           "RELAY_LIMITS__FREE_MONTHLY_PUSHES": "5",
-           "RELAY_LIMITS__SUBSCRIPTION_BURST": "3"}
+           # The run accepts seven pushes to the iOS device and three to the Android one, then
+           # has the eighth to the iOS device refused by its burst and the eleventh in all by the quota.
+           "RELAY_LIMITS__FREE_MONTHLY_PUSHES": "10",
+           "RELAY_LIMITS__SUBSCRIPTION_BURST": "7"}
     relay = subprocess.Popen([str(ROOT / "target/debug/aspen-push-relay")], env=env,
                              stdout=subprocess.DEVNULL, stderr=open(work / "relay.log", "w"))
     try:
@@ -190,9 +192,10 @@ def main() -> int:
             except OSError:
                 time.sleep(0.1)
         run(public_url, apple_key, google_key)
-        # Counts are saved every few seconds, not with each push.
+        # Counts are saved every few seconds, not with each push: the deployment's ten, and the
+        # other key's one, whose phone proved gone.
         time.sleep(6)
-        expect(psql(relay_url, "SELECT sum(pushes) FROM key_usage") == "6",
+        expect(psql(relay_url, "SELECT sum(pushes) FROM key_usage") == "11",
                "every push accepted is counted in the database within a few seconds")
         print("e2e: every check passed")
         return 0
@@ -219,6 +222,8 @@ def run(relay: str, apple_key, google_key) -> None:
     expect(status == 404, "a device is not changed without its secret")
     status, _, _ = call("PATCH", f"{relay}/v1/devices/{device['device']}", {"token": "apple-token-2"}, auth)
     expect(status == 204, "a device's token is replaced with its secret")
+    status, _, _ = call("PATCH", f"{relay}/v1/devices/{device['device']}", {}, auth)
+    expect(status == 400, "a token request naming no token is refused")
 
     deployment = ec.generate_private_key(ec.SECP256R1())
     status, _, body = call("POST", f"{relay}/v1/devices/{device['device']}/subscriptions",
@@ -276,11 +281,46 @@ def run(relay: str, apple_key, google_key) -> None:
     expect(status == 201 and not Stand.received,
            "a push that shows nothing is accepted and not sent, without the filtering entitlement")
 
-    status, headers, body = call("POST", endpoint, ciphertext, {**push_headers, "Authorization": vapid(deployment, relay)})
+    call_headers = {**push_headers, "TTL": "30", "Aspen-Push-Kind": "call",
+                    "Topic": "0190f0a0000070008000000000000099"}
+    Stand.received.clear()
+    status, _, _ = call("POST", endpoint, ciphertext, {**call_headers, "Authorization": vapid(deployment, relay)})
+    expect(status == 201 and not Stand.received,
+           "a call to an iOS device that registered no VoIP token is accepted and not sent")
+    status, _, _ = call("PATCH", f"{relay}/v1/devices/{device['device']}", {"voipToken": "apple-voip-1"}, auth)
+    expect(status == 204, "the device registers its VoIP token beside its token")
+    Stand.received.clear()
+    status, _, _ = call("POST", endpoint, ciphertext, {**call_headers, "Authorization": vapid(deployment, relay)})
+    expect(status == 201, "a call to it is accepted")
+    sent = [r for r in Stand.received if r["path"].startswith("/3/device/")]
+    expect(len(sent) == 1 and sent[0]["path"] == "/3/device/apple-voip-1", "it reaches APNs for the VoIP token")
+    headers = {k.lower(): v for k, v in sent[0]["headers"].items()}
+    payload = json.loads(sent[0]["body"])
+    expect(headers["apns-topic"] == f"{APP}.voip" and headers["apns-push-type"] == "voip"
+           and headers["apns-priority"] == "10"
+           and headers["apns-collapse-id"] == call_headers["Topic"]
+           and 0 < int(headers["apns-expiration"]) - time.time() <= 30,
+           "as a VoIP push to the app's .voip topic at priority 10, expiring with the ring")
+    expect("aps" not in payload and payload["aspen"] == {"s": subscription["subscription"], "c": b64(ciphertext)},
+           "carrying the subscription's id and the ciphertext, and nothing for the notification system")
+    Stand.received.clear()
+    Stand.answers["/3/device/"] = (400, {"reason": "BadDeviceToken"})
+    status, _, _ = call("POST", endpoint, ciphertext, {**call_headers, "Authorization": vapid(deployment, relay)})
+    expect(status == 201, "a call whose VoIP token Apple says is gone is accepted")
+    Stand.received.clear()
+    status, _, _ = call("POST", endpoint, ciphertext, {**call_headers, "Authorization": vapid(deployment, relay)})
+    expect(status == 201 and not Stand.received, "and the VoIP token is forgotten, the device kept")
+    status, _, _ = call("POST", endpoint, ciphertext, {**push_headers, "Authorization": vapid(deployment, relay)})
+    expect(status == 201 and [r for r in Stand.received if r["path"] == "/3/device/apple-token-2"],
+           "which is still sent alerts")
+
     status, headers, body = call("POST", endpoint, ciphertext, {**push_headers, "Authorization": vapid(deployment, relay)})
     expect(status == 429 and json.loads(body)["code"] == "rateLimited" and "retry-after" in {k.lower() for k in headers},
            "a phone woken too often is refused for a while")
 
+    status, _, body = call("POST", f"{relay}/v1/devices",
+                           {"platform": "fcm", "app": PROJECT, "token": "google-token", "voipToken": "x"})
+    expect(status == 400 and json.loads(body)["code"] == "validation", "an Android device may not give a VoIP token")
     status, _, body = call("POST", f"{relay}/v1/devices",
                            {"platform": "fcm", "app": PROJECT, "token": "google-token"})
     android = json.loads(body)
@@ -306,6 +346,14 @@ def run(relay: str, apple_key, google_key) -> None:
            and message["android"]["priority"] == "HIGH"
            and message["android"]["collapse_key"] == push_headers["Topic"],
            "it reaches FCM as a high-priority data message with the subscription's id and the ciphertext")
+    Stand.received.clear()
+    status, _, _ = call("POST", android_endpoint, ciphertext,
+                        {**call_headers, "Urgency": "low", "Authorization": vapid(deployment, relay)})
+    expect(status == 201, "a call to an Android device is accepted")
+    message = json.loads(next(r for r in Stand.received if r["path"].startswith("/v1/projects/"))["body"])["message"]
+    expect(message["data"] == {"s": android_subscription, "c": b64(ciphertext), "k": "call"}
+           and message["android"]["priority"] == "HIGH" and message["android"]["ttl"] == "30s",
+           "as a high-priority message marked as a call, whatever its urgency, living as long as the ring")
 
     status, _, body = call("POST", android_endpoint, ciphertext, {**push_headers, "Authorization": vapid(deployment, relay)})
     status, headers, body = call("POST", android_endpoint, ciphertext, {**push_headers, "Authorization": vapid(deployment, relay)})

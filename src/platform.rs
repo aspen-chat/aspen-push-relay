@@ -12,6 +12,10 @@ pub struct Push<'a> {
     pub ttl: Duration,
     /// A later push with the same topic replaces this one, if it is still waiting.
     pub topic: Option<&'a str>,
+    /// Whether the push is a call ringing the phone (`Aspen-Push-Kind: call`), sent as the
+    /// platform's call push: a VoIP push to the device's VoIP token on iOS, a high-priority
+    /// message marked `k: call` on Android (`spec/push.md`, Calls).
+    pub call: bool,
 }
 
 pub enum Outcome {
