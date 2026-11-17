@@ -11,8 +11,9 @@ use crate::usage::Usage;
 use crate::vapid::{self, VapidError};
 use axum::Json;
 use axum::body::Bytes;
-use axum::extract::{Path, State};
+use axum::extract::{MatchedPath, Path, Request, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
+use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, patch, post};
 use base64::Engine as _;
@@ -103,7 +104,38 @@ pub fn router(relay: Arc<Relay>) -> axum::Router {
             delete(delete_subscription),
         )
         .route("/v1/push/{push_id}", post(push))
+        .route_layer(middleware::from_fn(log_refusals))
         .with_state(relay)
+}
+
+/// What a refusal said, kept on its response for `log_refusals`.
+#[derive(Clone)]
+struct Refusal {
+    code: &'static str,
+    detail: String,
+}
+
+/// Logs every request answered with an error, so that an app or a deployment the relay turns
+/// away can be told why from the relay's side. The route is logged as its template, never the
+/// path, since a push's path is its subscription's capability.
+/// An error axum answers itself (a body that is not the JSON a route takes) has no code; a path
+/// no route matches is not logged.
+async fn log_refusals(route: MatchedPath, request: Request, next: Next) -> Response {
+    let method = request.method().clone();
+    let response = next.run(request).await;
+    let status = response.status();
+    if status.is_client_error() || status.is_server_error() {
+        let refusal = response.extensions().get::<Refusal>();
+        tracing::info!(
+            %method,
+            route = route.as_str(),
+            status = status.as_u16(),
+            code = refusal.map(|r| r.code),
+            detail = refusal.map(|r| r.detail.as_str()),
+            "refused a request"
+        );
+    }
+    response
 }
 
 /// An RFC 9457 problem, as the Aspen API writes them: a stable `code`, and a `detail` saying
@@ -141,6 +173,10 @@ impl IntoResponse for Problem {
             .to_string(),
         )
             .into_response();
+        response.extensions_mut().insert(Refusal {
+            code: self.code,
+            detail: self.detail,
+        });
         if let Some(wait) = self.retry_after
             && let Ok(value) = HeaderValue::from_str(&wait.as_secs().max(1).to_string())
         {

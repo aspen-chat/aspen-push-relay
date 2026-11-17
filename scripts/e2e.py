@@ -183,7 +183,7 @@ def main() -> int:
            "RELAY_LIMITS__FREE_MONTHLY_PUSHES": "10",
            "RELAY_LIMITS__SUBSCRIPTION_BURST": "7"}
     relay = subprocess.Popen([str(ROOT / "target/debug/aspen-push-relay")], env=env,
-                             stdout=subprocess.DEVNULL, stderr=open(work / "relay.log", "w"))
+                             stdout=open(work / "relay.log", "w"), stderr=subprocess.STDOUT)
     try:
         for _ in range(100):
             try:

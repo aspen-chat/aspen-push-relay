@@ -36,8 +36,11 @@ cp relay.example.toml relay.toml   # and fill it in
 cargo run --release
 ```
 
-It listens as plain HTTP; put a TLS proxy in front of it at `public_url`. `RELAY_LOG` sets how
-much it logs (`info` by default).
+It listens as plain HTTP; put a TLS proxy in front of it at `public_url`. It logs to standard
+output, and `RELAY_LOG` sets how much (`info` by default). At `info` every request it refuses is
+logged with its route (the template, never the path, since a push's path is a capability), status,
+problem code, and detail, so an app that cannot register or a deployment whose pushes are refused
+can be told why from here; `RELAY_LOG=info,aspen_push_relay::api=warn` leaves them out.
 
 ## Building it for a server
 
