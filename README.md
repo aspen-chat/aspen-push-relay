@@ -39,6 +39,25 @@ cargo run --release
 It listens as plain HTTP; put a TLS proxy in front of it at `public_url`. `RELAY_LOG` sets how
 much it logs (`info` by default).
 
+## Building it for a server
+
+A binary built against this machine's libraries needs at least their versions wherever it runs,
+so a rolling-release workstation's build refuses to start on a long-term release. A relay that
+leaves the machine it was built on is built against Debian 12 instead, for x86-64 or 64-bit ARM,
+on an x86-64 Linux machine with clang and lld:
+
+```
+scripts/baseline_build.py --arch x86_64    # or --arch aarch64
+```
+
+It fetches a Debian 12 sysroot into `target/cross/<arch>-bookworm/`, builds there, and checks the
+result: the architecture, no glibc symbol newer than Debian 12's, no shared library but the C
+runtime, OpenSSL, and libpq, and the binary starting (`--version`) against the sysroot's own
+libraries, under Debian's user-mode emulator on ARM. The binary runs on Debian 12, Ubuntu 24.04,
+Raspberry Pi OS Bookworm, and newer, which need only `libssl3`. `scripts/baseline_build.py --arch
+ARCH out` names the directory it lands in, and CI builds both and keeps each as an artifact. The
+script is a copy of aspen-chat-server's, which builds its servers the same way.
+
 ## Quotas
 
 Every deployment key may send `[limits] free_monthly_pushes` a month. A deployment that needs

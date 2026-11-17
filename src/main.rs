@@ -18,6 +18,19 @@ use std::time::Duration;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // `--version` answers before any configuration is read, so a build can be started anywhere to
+    // prove it links (`scripts/baseline_build.py`). The relay takes no other arguments.
+    let args: Vec<_> = std::env::args_os().skip(1).collect();
+    match args.as_slice() {
+        [] => {}
+        [arg] if arg == "--version" => {
+            println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
+            return Ok(());
+        }
+        _ => anyhow::bail!(
+            "the relay takes no arguments but --version; RELAY_CONFIG names its configuration file"
+        ),
+    }
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_env("RELAY_LOG")

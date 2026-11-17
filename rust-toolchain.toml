@@ -1,0 +1,4 @@
+[toolchain]
+# The release aspen-chat-server's rust-toolchain.toml pins, so the two build alike.
+channel = "1.99.1"
+profile = "default"
